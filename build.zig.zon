@@ -1,0 +1,17 @@
+.{
+    .name = .lc3_vm,
+    .version = "0.0.0",
+    .fingerprint = 0xdf7e9e48d24e67cb,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .logly = .{
+            .url = "https://github.com/muhammad-fiaz/logly.zig/archive/refs/tags/0.1.6.tar.gz",
+            .hash = "logly-0.1.6-kZjLexxIEgCMOhBA3f1bx3lzP-JrTZDAfcYc7vVrtbzV",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
