@@ -1,7 +1,7 @@
 .{
-    .name = .lc3_vm,
+    .name = .zig_vm,
     .version = "0.0.0",
-    .fingerprint = 0xdf7e9e48d24e67cb,
+    .fingerprint = 0x42eff9a187916fb,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .logly = .{
