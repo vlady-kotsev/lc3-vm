@@ -1,6 +1,6 @@
 const std = @import("std");
 const lc3_vm = @import("lc3_vm");
-const logly = @import("logly");
+// const logly = @import("logly");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -12,10 +12,11 @@ pub fn main() !void {
     if (args.len < 2) {
         return lc3_vm.errors.VmError.InvalidArgs;
     }
+    _ = try lc3_vm.vm.Vm.init(allocator);
 
-    const logger = try logly.Logger.init(allocator);
-    defer logger.deinit();
+    // const logger = try logly.Logger.init(allocator);
+    // defer logger.deinit();
 
-    // Entire log lines are colored by level!
-    try logger.info("Logly-Zig is working!", @src());
+    // // Entire log lines are colored by level!
+    // try logger.info("Logly-Zig is working!", @src());
 }
