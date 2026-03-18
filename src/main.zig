@@ -1,5 +1,7 @@
 const std = @import("std");
 const lc3_vm = @import("lc3_vm");
+const VmError = lc3_vm.errors.VmError;
+const Vm = lc3_vm.vm.Vm;
 // const logly = @import("logly");
 
 pub fn main() !void {
@@ -10,9 +12,11 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        return lc3_vm.errors.VmError.InvalidArgs;
+        return VmError.InvalidArgs;
     }
-    _ = try lc3_vm.vm.Vm.init(allocator);
+
+    var vm = try Vm.init(allocator);
+    defer vm.deinit();
 
     // const logger = try logly.Logger.init(allocator);
     // defer logger.deinit();
