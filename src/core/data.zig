@@ -14,29 +14,29 @@ pub const Register = enum(u8) {
     R_COND,
 };
 
-pub const OpCode = enum(u8) {
-    OP_BR, //* branch */
-    OP_ADD, //* add  */
-    OP_LD, //* load */
-    OP_ST, //* store */
-    OP_JSR, //* jump register */
-    OP_AND, //* bitwise and */
-    OP_LDR, //* load register */
-    OP_STR, //* store register */
-    OP_RTI, //* unused */
-    OP_NOT, //* bitwise not */
-    OP_LDI, //* load indirect */
-    OP_STI, //* store indirect */
-    OP_JMP, //* jump */
-    OP_RES, //* reserved (unused) */
-    OP_LEA, //* load effective address */
-    OP_TRAP, //* execute trap */
+pub const OpCode = enum(u16) {
+    OP_BR, //* branch
+    OP_ADD, //* add
+    OP_LD, //* load
+    OP_ST, //* store
+    OP_JSR, //* jump register
+    OP_AND, //* bitwise and
+    OP_LDR, //* load register
+    OP_STR, //* store register
+    OP_RTI, //* unused
+    OP_NOT, //* bitwise not
+    OP_LDI, //* load indirect
+    OP_STI, //* store indirect
+    OP_JMP, //* jump
+    OP_RES, //* reserved (unused)
+    OP_LEA, //* load effective address
+    OP_TRAP, //* execute trap
 };
 
 pub const Flag = enum(u16) {
-    FL_POS = 1 << 0, //* P */
-    FL_ZRO = 1 << 1, //* Z */
-    FL_NEG = 1 << 2, //* N */
+    FL_POS = 1 << 0, // P
+    FL_ZRO = 1 << 1, // Z
+    FL_NEG = 1 << 2, // N
 };
 
 pub const TrapCode = enum(u8) {
