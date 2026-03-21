@@ -5,19 +5,33 @@ const data = @import("data.zig");
 const Register = data.Register;
 const Flag = data.Flag;
 const utils = @import("utils.zig");
+const OpCode = data.OpCode;
 
 pub const Vm = struct {
     memory: []u16,
     registers: std.AutoHashMap(Register, u16),
     allocator: Allocator,
+    reader: std.Io.Reader,
+    writer: std.Io.Writer,
+    running: bool,
 
     const Self = @This();
+
+    var reader_buffer: [1024]u8 = undefined;
+    const stdin_reader = std.fs.File.stdin().reader(&reader_buffer);
+
+    var writer_buffer: [1204]u8 = undefined;
+    const stdout_writer = std.fs.File.stdout().writerStreaming(&writer_buffer);
+
     // === Public methods ===
     pub fn init(allocator: Allocator) !Self {
         var vm = Self{
             .memory = try allocator.alloc(u16, data.MEMORY_MAX),
             .allocator = allocator,
             .registers = std.AutoHashMap(Register, u16).init(allocator),
+            .reader = stdin_reader.interface,
+            .writer = stdout_writer.interface,
+            .running = true,
         };
 
         try vm.registers.put(.R_R0, 0);
@@ -39,16 +53,20 @@ pub const Vm = struct {
         self.registers.deinit();
     }
 
-    pub fn run(self: *Self) !void {
-        //@{Load Arguments}
+    pub fn run(self: *Self, file_name: []const u8) !void {
+        // Load program in memory
+        try self.readFile(file_name);
+
         //@{Setup}
-        const running = true;
-        while (running) {
-            //* FETCH */
-            //uint16_t instr = mem_read(reg[R_PC]++);
-            //uint16_t op = instr >> 12;
-            const op: u16 = 10;
-            const instruction_payload: u16 = 10;
+
+        while (self.running) {
+            const pc = try self.getProgramCounter();
+            const instruction_payload = try memoryRead(pc);
+            try self.registers.put(.R_PC, pc + 1);
+
+            const op: OpCode = std.enums
+                .fromInt(OpCode, (instruction_payload >> 12)) orelse VmError.InvalidOpCode;
+
             switch (op) {
                 .OP_ADD => {
                     try self.handleAdd(instruction_payload);
@@ -90,28 +108,7 @@ pub const Vm = struct {
                     try self.handleStoreRegister(instruction_payload);
                 },
                 .OP_TRAP => {
-                    //reg[R_R7] = reg[R_PC];
-
-                    switch (instruction_payload & 0xFF) {
-                        .TRAP_GETC => {
-                            //@{TRAP GETC}
-                        },
-                        .TRAP_OUT => {
-                            // @{TRAP OUT}
-                        },
-                        .TRAP_PUTS => {
-                            //   @{TRAP PUTS}
-                        },
-                        .TRAP_IN => {
-                            //@{TRAP IN}
-                        },
-                        .TRAP_PUTSP => {
-                            //@{TRAP PUTSP}
-                        },
-                        .TRAP_HALT => {
-                            //@{TRAP HALT}
-                        },
-                    }
+                    try self.handleTrap(instruction_payload);
                 },
                 .OP_RES, .OP_RTI => {
                     // Ignore
@@ -340,6 +337,61 @@ pub const Vm = struct {
         try memoryWrite(base_address +% offset, value);
     }
 
+    fn handleTrap(self: *Self, instruction_payload: u16) !void {
+        const pc = try self.getProgramCounter();
+        try self.registers.put(.R_R7, pc);
+
+        const trap_instruction = instruction_payload & 0b1111_1111;
+        switch (trap_instruction) {
+            .TRAP_GETC => {
+                const char: u16 = @intCast(try self.reader.readByte());
+                try self.registers.put(.R_R0, char);
+                try self.updateFlags(.R_R0);
+            },
+            .TRAP_OUT => {
+                const char: u8 = @truncate(self.registers.get(.R_R0).?);
+                try self.writer.print("{c}", .{char});
+                try self.writer.flush();
+            },
+            .TRAP_PUTS => {
+                var index: u16 = self.registers.get(.R_R0).?;
+                while (self.memory[index] != 0) : (index += 1) {
+                    const char: u8 = @truncate(self.memory[index]);
+                    try self.writer.print("{c}", .{char});
+                }
+                try self.writer.flush();
+            },
+            .TRAP_IN => {
+                try self.writer.print("Enter a character: ", .{});
+                try self.writer.flush();
+                const char: u8 = @truncate(try self.reader.readByte());
+                try self.writer.print("{c}", .{char});
+                try self.writer.flush();
+
+                try self.registers.put(.R_R0, @intCast(char));
+                try self.updateFlags(.R_R0);
+            },
+            .TRAP_PUTSP => {
+                var index: u16 = self.registers.get(.R_R0).?;
+                while (self.memory[index] != 0) : (index += 1) {
+                    const char1: u8 = @truncate(self.memory[index]);
+                    try self.writer.print("{c}", .{char1});
+                    const char2: u8 = @truncate((self.memory[index] >> 8));
+                    if (char2 != 0) {
+                        try self.writer.print("{c}", .{char2});
+                    }
+                }
+                try self.writer.flush();
+            },
+            .TRAP_HALT => {
+                try self.writer.print("HALT\n", .{});
+                try self.writer.flush();
+
+                self.running = false;
+            },
+        }
+    }
+
     fn memoryRead(address: u16) !u16 {
         _ = address;
         return 0;
@@ -357,6 +409,27 @@ pub const Vm = struct {
             return pc;
         } else {
             return VmError.InvalidRegister;
+        }
+    }
+
+    fn readFile(self: *Self, file_name: []const u8) !void {
+        var buffer: [data.MEMORY_MAX * 2]u8 = undefined;
+        const file = try std.fs.cwd().readFile(file_name, &buffer);
+
+        if (file.len % 2 != 0) {
+            return VmError.InvalidFile;
+        }
+        const origin: u16 = std.mem.readInt(u16, file[0..2], .big);
+        if (origin != data.PC_START) {
+            return VmError.InvalidOrigin;
+        }
+
+        var file_index: usize = 2;
+        var program_index: usize = @intCast(origin);
+
+        while (file_index < file.len) : (file_index += 2) {
+            self.memory[program_index] = std.mem.readInt(u16, file[file_index..][0..2], .big);
+            program_index += 1;
         }
     }
 };

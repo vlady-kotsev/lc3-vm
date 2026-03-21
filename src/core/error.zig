@@ -4,4 +4,6 @@ pub const VmError = error{
     InvalidArgs,
     InvalidRegister,
     InvalidOpCode,
+    InvalidOrigin,
+    InvalidFile,
 };
