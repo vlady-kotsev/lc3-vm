@@ -39,5 +39,4 @@ src/
 
 ## References
 
-- [Write your Own Virtual Machine](https://www.jmeiners.com/lc3-vm/)
-- [LC-3 ISA Specification](https://www.jmeiners.com/lc3-vm/supplies/lc3-isa.pdf)
+[LC-3 Wikipedia](https://en.wikipedia.org/wiki/Little_Computer_3)
