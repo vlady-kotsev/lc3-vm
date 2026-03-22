@@ -23,10 +23,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Dependency
-    const logly = b.dependency("logly", .{ .target = target, .optimize = optimize });
-    exe.root_module.addImport("logly", logly.module("logly"));
-
     b.installArtifact(exe);
 
     // Run step: `zig build run -- [args]`

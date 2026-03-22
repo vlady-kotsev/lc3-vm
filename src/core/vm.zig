@@ -6,31 +6,32 @@ const Register = data.Register;
 const Flag = data.Flag;
 const utils = @import("utils.zig");
 const OpCode = data.OpCode;
+const VmMemory = @import("memory.zig").VmMemory;
 
 pub const Vm = struct {
-    memory: []u16,
+    memory: VmMemory,
     registers: std.AutoHashMap(Register, u16),
     allocator: Allocator,
-    reader: std.Io.Reader,
-    writer: std.Io.Writer,
+    reader: *std.Io.Reader,
+    writer: *std.Io.Writer,
     running: bool,
 
     const Self = @This();
 
     var reader_buffer: [1024]u8 = undefined;
-    const stdin_reader = std.fs.File.stdin().reader(&reader_buffer);
+    var stdin_reader = std.fs.File.stdin().reader(&reader_buffer);
 
-    var writer_buffer: [1204]u8 = undefined;
-    const stdout_writer = std.fs.File.stdout().writerStreaming(&writer_buffer);
+    var writer_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&writer_buffer);
 
     // === Public methods ===
     pub fn init(allocator: Allocator) !Self {
         var vm = Self{
-            .memory = try allocator.alloc(u16, data.MEMORY_MAX),
+            .memory = try VmMemory.init(allocator),
             .allocator = allocator,
             .registers = std.AutoHashMap(Register, u16).init(allocator),
-            .reader = stdin_reader.interface,
-            .writer = stdout_writer.interface,
+            .reader = &stdin_reader.interface,
+            .writer = &stdout_writer.interface,
             .running = true,
         };
 
@@ -49,7 +50,7 @@ pub const Vm = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.allocator.free(self.memory);
+        self.memory.deinit();
         self.registers.deinit();
     }
 
@@ -57,15 +58,17 @@ pub const Vm = struct {
         // Load program in memory
         try self.readFile(file_name);
 
-        //@{Setup}
+        utils.setupSignalHandler();
+        utils.disableInputBuffering();
+        defer utils.restoreInputBuffering();
 
         while (self.running) {
             const pc = try self.getProgramCounter();
-            const instruction_payload = try memoryRead(pc);
-            try self.registers.put(.R_PC, pc + 1);
+            const instruction_payload = try self.memory.read(pc);
+            try self.registers.put(.R_PC, pc +% 1);
 
             const op: OpCode = std.enums
-                .fromInt(OpCode, (instruction_payload >> 12)) orelse VmError.InvalidOpCode;
+                .fromInt(OpCode, (instruction_payload >> 12)) orelse return VmError.InvalidOpCode;
 
             switch (op) {
                 .OP_ADD => {
@@ -111,10 +114,7 @@ pub const Vm = struct {
                     try self.handleTrap(instruction_payload);
                 },
                 .OP_RES, .OP_RTI => {
-                    // Ignore
-                },
-                else => {
-                    return VmError.InvalidOpCode;
+                    @panic("OP_RES or OP_RTI encountered");
                 },
             }
         }
@@ -254,7 +254,7 @@ pub const Vm = struct {
             .fromInt(Register, (instruction_payload >> 9) & 0b111) orelse return VmError.InvalidRegister;
         const pc_offset = utils.signExtend((instruction_payload & 0b111_111_111), 9);
         const pc = try self.getProgramCounter();
-        const value = try memoryRead(pc +% pc_offset);
+        const value = try self.memory.read(pc +% pc_offset);
         try self.registers.put(destination_register, value);
 
         try self.updateFlags(destination_register);
@@ -267,7 +267,7 @@ pub const Vm = struct {
         const pc_offset = utils.signExtend((instruction_payload & 0b111_111_111), 9);
         // mem_read(mem_read(reg[R_PC] + pc_offset));
         const pc = try self.getProgramCounter();
-        const value = try memoryRead(try memoryRead(pc +% pc_offset));
+        const value = try self.memory.read(try self.memory.read(pc +% pc_offset));
         try self.registers.put(destination_register, value);
 
         try self.updateFlags(destination_register);
@@ -284,7 +284,7 @@ pub const Vm = struct {
         const offset = utils
             .signExtend((instruction_payload & 0b11_1111), 6);
 
-        const value = try memoryRead(base +% offset);
+        const value = try self.memory.read(base +% offset);
 
         try self.registers.put(destination_register, value);
 
@@ -309,7 +309,7 @@ pub const Vm = struct {
         const offset = utils.signExtend((instruction_payload & 0b1_1111_1111), 9);
         const pc = try self.getProgramCounter();
 
-        try memoryWrite(pc +% offset, value);
+        try self.memory.write(pc +% offset, value);
     }
 
     fn handleStoreIndirect(self: *Self, instruction_payload: u16) !void {
@@ -320,7 +320,7 @@ pub const Vm = struct {
         const offset = utils.signExtend((instruction_payload & 0b1_1111_1111), 9);
         const pc = try self.getProgramCounter();
 
-        try memoryWrite(try memoryRead(pc +% offset), value);
+        try self.memory.write(try self.memory.read(pc +% offset), value);
     }
 
     fn handleStoreRegister(self: *Self, instruction_payload: u16) !void {
@@ -334,17 +334,18 @@ pub const Vm = struct {
 
         const offset = utils.signExtend((instruction_payload & 0b11_1111), 6);
 
-        try memoryWrite(base_address +% offset, value);
+        try self.memory.write(base_address +% offset, value);
     }
 
     fn handleTrap(self: *Self, instruction_payload: u16) !void {
         const pc = try self.getProgramCounter();
         try self.registers.put(.R_R7, pc);
 
-        const trap_instruction = instruction_payload & 0b1111_1111;
+        const trap_instruction = std.enums
+            .fromInt(data.TrapCode, instruction_payload & 0b1111_1111) orelse return VmError.InvalidTrapCode;
         switch (trap_instruction) {
             .TRAP_GETC => {
-                const char: u16 = @intCast(try self.reader.readByte());
+                const char: u16 = @intCast(try self.reader.takeByte());
                 try self.registers.put(.R_R0, char);
                 try self.updateFlags(.R_R0);
             },
@@ -355,16 +356,20 @@ pub const Vm = struct {
             },
             .TRAP_PUTS => {
                 var index: u16 = self.registers.get(.R_R0).?;
-                while (self.memory[index] != 0) : (index += 1) {
-                    const char: u8 = @truncate(self.memory[index]);
+                var value = try self.memory.read(index);
+                while (value != 0) {
+                    const char: u8 = @truncate(value);
                     try self.writer.print("{c}", .{char});
+
+                    index += 1;
+                    value = try self.memory.read(index);
                 }
                 try self.writer.flush();
             },
             .TRAP_IN => {
                 try self.writer.print("Enter a character: ", .{});
                 try self.writer.flush();
-                const char: u8 = @truncate(try self.reader.readByte());
+                const char: u8 = @truncate(try self.reader.takeByte());
                 try self.writer.print("{c}", .{char});
                 try self.writer.flush();
 
@@ -373,13 +378,17 @@ pub const Vm = struct {
             },
             .TRAP_PUTSP => {
                 var index: u16 = self.registers.get(.R_R0).?;
-                while (self.memory[index] != 0) : (index += 1) {
-                    const char1: u8 = @truncate(self.memory[index]);
+                var value = try self.memory.read(index);
+                while (value != 0) {
+                    const char1: u8 = @truncate(value);
                     try self.writer.print("{c}", .{char1});
-                    const char2: u8 = @truncate((self.memory[index] >> 8));
+                    const char2: u8 = @truncate((value >> 8));
                     if (char2 != 0) {
                         try self.writer.print("{c}", .{char2});
                     }
+
+                    index += 1;
+                    value = try self.memory.read(index);
                 }
                 try self.writer.flush();
             },
@@ -390,16 +399,6 @@ pub const Vm = struct {
                 self.running = false;
             },
         }
-    }
-
-    fn memoryRead(address: u16) !u16 {
-        _ = address;
-        return 0;
-    }
-
-    fn memoryWrite(address: u16, value: u16) !void {
-        _ = address;
-        _ = value;
     }
 
     fn getProgramCounter(self: *const Self) !u16 {
@@ -415,7 +414,6 @@ pub const Vm = struct {
     fn readFile(self: *Self, file_name: []const u8) !void {
         var buffer: [data.MEMORY_MAX * 2]u8 = undefined;
         const file = try std.fs.cwd().readFile(file_name, &buffer);
-
         if (file.len % 2 != 0) {
             return VmError.InvalidFile;
         }
@@ -425,10 +423,10 @@ pub const Vm = struct {
         }
 
         var file_index: usize = 2;
-        var program_index: usize = @intCast(origin);
+        var program_index = origin;
 
         while (file_index < file.len) : (file_index += 2) {
-            self.memory[program_index] = std.mem.readInt(u16, file[file_index..][0..2], .big);
+            try self.memory.write(program_index, std.mem.readInt(u16, file[file_index..][0..2], .big));
             program_index += 1;
         }
     }

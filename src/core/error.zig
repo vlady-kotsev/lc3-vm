@@ -6,4 +6,6 @@ pub const VmError = error{
     InvalidOpCode,
     InvalidOrigin,
     InvalidFile,
+    InvalidMemoryAddress,
+    InvalidTrapCode,
 };
