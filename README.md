@@ -1,6 +1,8 @@
 # LC-3 Virtual Machine
 
-An LC-3 virtual machine implemented in Zig 0.15.2.
+<img width="100"  alt="image" src="https://github.com/user-attachments/assets/44938ee5-f985-418b-8927-2ab294a26cc6" />
+<br/>
+A LittleComputer-3 virtual machine implemented in Zig 0.15.2.
 
 ## Features
 
